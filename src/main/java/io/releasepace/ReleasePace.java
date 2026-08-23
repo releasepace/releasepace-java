@@ -3,6 +3,7 @@ package io.releasepace;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -36,7 +37,7 @@ public class ReleasePace implements AutoCloseable {
 
     private static final Logger LOG = Logger.getLogger(ReleasePace.class.getName());
     private static final String DEFAULT_API_URL = "https://api.releasepace.io";
-    private static final String SDK_VERSION = "1.0.0";
+    private static final String SDK_VERSION = resolveSdkVersion();
 
     private final String apiKey;
     private final String environment;
@@ -67,8 +68,12 @@ public class ReleasePace implements AutoCloseable {
 
     // ── Public API ─────────────────────────────────────────────
 
-    /** Fetch flags once and start background polling. */
-    public ReleasePace connect() {
+    /**
+     * Fetch flags once and start background polling. Repeated calls are idempotent.
+     * @return this client
+     */
+    public synchronized ReleasePace connect() {
+        if (connected) return this;
         fetchFlags();
         connected = true;
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -82,15 +87,22 @@ public class ReleasePace implements AutoCloseable {
 
     /** Stop polling. Implements AutoCloseable. */
     @Override
-    public void close() {
-        if (scheduler != null) scheduler.shutdown();
+    public synchronized void close() {
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+            scheduler = null;
+        }
         connected = false;
     }
 
     /** Force an immediate re-fetch. */
     public void refresh() { fetchFlags(); }
 
-    /** Return true if a boolean flag is enabled. */
+    /**
+     * Evaluate a boolean flag.
+     * @param key flag key
+     * @return {@code true} when enabled for the configured context
+     */
     public boolean isEnabled(String key) {
         Flag flag = cache.get().get(key);
         if (flag == null || !flag.enabled) return false;
@@ -102,14 +114,24 @@ public class ReleasePace implements AutoCloseable {
         return true;
     }
 
-    /** Get flag value as String, or return defaultValue. */
+    /**
+     * Get a flag value as text.
+     * @param key flag key
+     * @param defaultValue value returned when the flag is unavailable or disabled
+     * @return the evaluated value or {@code defaultValue}
+     */
     public String getString(String key, String defaultValue) {
         Flag flag = cache.get().get(key);
         if (flag == null || !flag.enabled || flag.value == null) return defaultValue;
         return flag.value.toString();
     }
 
-    /** Get flag value as double, or return defaultValue. */
+    /**
+     * Get a flag value as a number.
+     * @param key flag key
+     * @param defaultValue value returned when the flag cannot be evaluated as a number
+     * @return the evaluated value or {@code defaultValue}
+     */
     public double getNumber(String key, double defaultValue) {
         Flag flag = cache.get().get(key);
         if (flag == null || !flag.enabled || flag.value == null) return defaultValue;
@@ -117,16 +139,26 @@ public class ReleasePace implements AutoCloseable {
         catch (NumberFormatException e) { return defaultValue; }
     }
 
-    /** Get raw flag value object (can be Map, List, etc. for JSON flags). */
+    /**
+     * Get the raw flag value, including maps and lists for JSON flags.
+     * @param key flag key
+     * @param defaultValue value returned when the flag is unavailable or disabled
+     * @return the raw evaluated value or {@code defaultValue}
+     */
     public Object getValue(String key, Object defaultValue) {
         Flag flag = cache.get().get(key);
         if (flag == null || !flag.enabled) return defaultValue;
         return flag.value != null ? flag.value : defaultValue;
     }
 
-    /** Get all flags as an unmodifiable list. */
+    /**
+     * Get a stable, key-sorted snapshot of all cached flags.
+     * @return an unmodifiable flag list
+     */
     public List<Flag> getAllFlags() {
-        return Collections.unmodifiableList(new ArrayList<>(cache.get().values()));
+        List<Flag> flags = new ArrayList<>(cache.get().values());
+        flags.sort(Comparator.comparing(flag -> flag.key));
+        return Collections.unmodifiableList(flags);
     }
 
     // ── Internal ───────────────────────────────────────────────
@@ -135,9 +167,9 @@ public class ReleasePace implements AutoCloseable {
         try {
             StringBuilder url = new StringBuilder(apiUrl)
                 .append("/api/client/features?environment=")
-                .append(environment);
+                .append(encodeQueryValue(environment));
             context.forEach((k, v) ->
-                url.append("&ctx_").append(k).append("=").append(v));
+                url.append("&ctx_").append(encodeQueryValue(k)).append("=").append(encodeQueryValue(v)));
 
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(url.toString()))
@@ -158,42 +190,69 @@ public class ReleasePace implements AutoCloseable {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> features = (List<Map<String, Object>>) body.get("features");
 
-            Map<String, Flag> newCache = new ConcurrentHashMap<>();
-            List<Flag> updated = new ArrayList<>();
+            if (features == null) {
+                throw new IOException("ReleasePace API response is missing features");
+            }
+
+            Map<String, Flag> newCache = new HashMap<>();
 
             for (Map<String, Object> f : features) {
                 Flag flag = Flag.fromMap(f);
-                Flag old = cache.get().get(flag.key);
-                if (!flag.equals(old)) updated.add(flag);
                 newCache.put(flag.key, flag);
             }
 
-            cache.set(newCache);
+            Map<String, Flag> oldCache = cache.getAndSet(Collections.unmodifiableMap(newCache));
 
-            if (!updated.isEmpty() && onUpdate != null) {
-                onUpdate.accept(getAllFlags());
+            if (!newCache.equals(oldCache) && onUpdate != null) {
+                try {
+                    onUpdate.accept(getAllFlags());
+                } catch (RuntimeException callbackError) {
+                    LOG.warning("ReleasePace onUpdate callback error: " + callbackError.getMessage());
+                }
             }
 
         } catch (Exception e) {
             LOG.warning("ReleasePace fetch error: " + e.getMessage());
-            if (onError != null) onError.accept(e);
+            if (onError != null) {
+                try {
+                    onError.accept(e);
+                } catch (RuntimeException callbackError) {
+                    LOG.warning("ReleasePace onError callback error: " + callbackError.getMessage());
+                }
+            }
         }
+    }
+
+    private static String encodeQueryValue(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private static String resolveSdkVersion() {
+        String version = ReleasePace.class.getPackage().getImplementationVersion();
+        return version != null ? version : "dev";
     }
 
     private static int hashBucket(String input) {
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
             byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
-            return new BigInteger(1, Arrays.copyOfRange(digest, 0, 4)).intValue() % 100;
+            return new BigInteger(1, Arrays.copyOfRange(digest, 0, 4))
+                .mod(BigInteger.valueOf(100))
+                .intValue();
         } catch (Exception e) {
-            return input.hashCode() & 0x7FFFFFFF % 100;
+            return Math.floorMod(input.hashCode(), 100);
         }
     }
 
     // ── Builder ────────────────────────────────────────────────
 
+    /**
+     * Create a client builder.
+     * @return a new client builder
+     */
     public static Builder builder() { return new Builder(); }
 
+    /** Builds configured {@link ReleasePace} clients. */
     public static class Builder {
         private String apiKey;
         private String environment = "production";
@@ -203,17 +262,75 @@ public class ReleasePace implements AutoCloseable {
         private Consumer<List<Flag>> onUpdate;
         private Consumer<Exception> onError;
 
+        /** Creates a builder with production defaults. */
+        public Builder() {}
+
+        /**
+         * Set the SDK API key.
+         * @param v SDK API key
+         * @return this builder
+         */
         public Builder apiKey(String v)          { this.apiKey = v; return this; }
+        /**
+         * Set the environment to evaluate.
+         * @param v environment slug
+         * @return this builder
+         */
         public Builder environment(String v)     { this.environment = v; return this; }
+        /**
+         * Override the API base URL.
+         * @param v ReleasePace API base URL
+         * @return this builder
+         */
         public Builder apiUrl(String v)          { this.apiUrl = v; return this; }
+        /**
+         * Set the background polling interval.
+         * @param v polling interval in milliseconds
+         * @return this builder
+         */
         public Builder pollIntervalMs(long v)    { this.pollIntervalMs = v; return this; }
+        /**
+         * Set evaluation attributes sent with fetch requests.
+         * @param v evaluation context
+         * @return this builder
+         */
         public Builder context(Map<String,String> v) { this.context = v; return this; }
+        /**
+         * Register a flag snapshot change callback.
+         * @param v callback invoked when the flag snapshot changes
+         * @return this builder
+         */
         public Builder onUpdate(Consumer<List<Flag>> v) { this.onUpdate = v; return this; }
+        /**
+         * Register a fetch error callback.
+         * @param v callback invoked when fetching fails
+         * @return this builder
+         */
         public Builder onError(Consumer<Exception> v)   { this.onError = v; return this; }
 
+        /**
+         * Build the configured client without connecting it.
+         * @return a validated, disconnected client
+         */
         public ReleasePace build() {
-            Objects.requireNonNull(apiKey, "apiKey is required");
+            requireNonBlank(apiKey, "apiKey");
+            requireNonBlank(environment, "environment");
+            requireNonBlank(apiUrl, "apiUrl");
+            if (pollIntervalMs <= 0) {
+                throw new IllegalArgumentException("pollIntervalMs must be greater than zero");
+            }
+            Objects.requireNonNull(context, "context is required");
+            context.forEach((key, value) -> {
+                requireNonBlank(key, "context key");
+                Objects.requireNonNull(value, "context value is required");
+            });
             return new ReleasePace(this);
+        }
+
+        private static void requireNonBlank(String value, String name) {
+            if (value == null || value.isBlank()) {
+                throw new IllegalArgumentException(name + " is required");
+            }
         }
     }
 }

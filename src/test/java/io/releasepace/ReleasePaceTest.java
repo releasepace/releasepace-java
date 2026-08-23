@@ -8,7 +8,10 @@ import org.junit.jupiter.api.*;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -18,6 +21,9 @@ class ReleasePaceTest {
     private HttpServer mockServer;
     private int port;
     private String serverUrl;
+    private final AtomicReference<String> responseBody = new AtomicReference<>();
+    private final AtomicReference<String> lastRawQuery = new AtomicReference<>();
+    private final AtomicInteger requestCount = new AtomicInteger();
 
     private static final String MOCK_RESPONSE = """
         {
@@ -40,15 +46,18 @@ class ReleasePaceTest {
         mockServer = HttpServer.create(new InetSocketAddress(0), 0);
         port = mockServer.getAddress().getPort();
         serverUrl = "http://localhost:" + port;
+        responseBody.set(MOCK_RESPONSE);
 
         mockServer.createContext("/api/client/features", exchange -> {
+            requestCount.incrementAndGet();
+            lastRawQuery.set(exchange.getRequestURI().getRawQuery());
             String auth = exchange.getRequestHeaders().getFirst("Authorization");
             if (auth == null || !auth.startsWith("Bearer ")) {
                 exchange.sendResponseHeaders(401, 0);
                 exchange.close();
                 return;
             }
-            byte[] body = MOCK_RESPONSE.getBytes(StandardCharsets.UTF_8);
+            byte[] body = responseBody.get().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             try (OutputStream os = exchange.getResponseBody()) { os.write(body); }
@@ -73,8 +82,16 @@ class ReleasePaceTest {
 
     @Test
     void requiresApiKey() {
-        assertThrows(NullPointerException.class, () ->
+        assertThrows(IllegalArgumentException.class, () ->
             ReleasePace.builder().build());
+    }
+
+    @Test
+    void rejectsInvalidPollInterval() {
+        assertThrows(IllegalArgumentException.class, () -> ReleasePace.builder()
+            .apiKey("rp_live_test")
+            .pollIntervalMs(0)
+            .build());
     }
 
     @Test
@@ -163,18 +180,54 @@ class ReleasePaceTest {
     }
 
     @Test
-    void onUpdateCalledWhenFlagsChange() throws Exception {
-        var updated = new java.util.concurrent.atomic.AtomicBoolean(false);
+    void contextAndEnvironmentAreUrlEncoded() {
+        var context = new HashMap<String, String>();
+        context.put("user id", "a&b=c");
+        try (ReleasePace ignored = ReleasePace.builder()
+            .apiKey("rp_live_test")
+            .environment("test env")
+            .apiUrl(serverUrl)
+            .pollIntervalMs(Long.MAX_VALUE)
+            .context(context)
+            .build()
+            .connect()) {
+            assertEquals("environment=test+env&ctx_user+id=a%26b%3Dc", lastRawQuery.get());
+        }
+    }
+
+    @Test
+    void connectIsIdempotent() {
+        int before = requestCount.get();
         try (ReleasePace rp = ReleasePace.builder()
             .apiKey("rp_live_test")
             .apiUrl(serverUrl)
             .pollIntervalMs(Long.MAX_VALUE)
-            .onUpdate(flags -> updated.set(true))
+            .build()) {
+            assertSame(rp, rp.connect());
+            assertSame(rp, rp.connect());
+            assertEquals(before + 1, requestCount.get());
+        }
+    }
+
+    @Test
+    void onUpdateCalledForInitialLoadAndRemoval() {
+        var updateCount = new AtomicInteger();
+        try (ReleasePace rp = ReleasePace.builder()
+            .apiKey("rp_live_test")
+            .apiUrl(serverUrl)
+            .pollIntervalMs(Long.MAX_VALUE)
+            .onUpdate(flags -> updateCount.incrementAndGet())
             .build()
             .connect()) {
-            // First connect triggers onUpdate since cache was empty
+            assertEquals(1, updateCount.get());
+            responseBody.set("""
+                {"version":2,"environment":"test","features":[]}
+                """);
             rp.refresh();
-            // updated might not be true if flags didn't change — just verify no exception
+            assertEquals(2, updateCount.get());
+            assertTrue(rp.getAllFlags().isEmpty());
+        } finally {
+            responseBody.set(MOCK_RESPONSE);
         }
     }
 }

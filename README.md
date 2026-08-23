@@ -1,8 +1,8 @@
 # releasepace-java
 
-Official Java SDK for [ReleasePace](https://releasepace.io) — production-grade feature flags.
+Official Java SDK for [ReleasePace](https://releasepace.pages.dev) — production-grade feature flags.
 
-[![Maven Central](https://img.shields.io/maven-central/v/io.releasepace/releasepace-java)](https://central.sonatype.com/artifact/io.releasepace/releasepace-java)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.releasepace/releasepace-java)](https://central.sonatype.com/artifact/io.github.releasepace/releasepace-java)
 [![Java](https://img.shields.io/badge/Java-17+-blue)](https://openjdk.org/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -13,7 +13,7 @@ Official Java SDK for [ReleasePace](https://releasepace.io) — production-grade
 **Maven:**
 ```xml
 <dependency>
-  <groupId>io.releasepace</groupId>
+  <groupId>io.github.releasepace</groupId>
   <artifactId>releasepace-java</artifactId>
   <version>1.0.0</version>
 </dependency>
@@ -21,7 +21,7 @@ Official Java SDK for [ReleasePace](https://releasepace.io) — production-grade
 
 **Gradle:**
 ```gradle
-implementation 'io.releasepace:releasepace-java:1.0.0'
+implementation 'io.github.releasepace:releasepace-java:1.0.0'
 ```
 
 ---
@@ -113,8 +113,8 @@ public class CheckoutController {
 
 ## Author
 
-**[Aryaa Tiwari](https://github.com/AryaaTiwari)** — [LinkedIn](https://www.linkedin.com/in/aryaa-tiwari/)
+**[Aryaa Tiwari](https://github.com/ReleasePace)** — [LinkedIn](https://www.linkedin.com/in/aryaa-tiwari/)
 
 ## License
 
-MIT © [ReleasePace](https://releasepace.io)
+MIT © [ReleasePace](https://releasepace.pages.dev)
