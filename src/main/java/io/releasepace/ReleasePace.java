@@ -1,14 +1,12 @@
 package io.releasepace;
 
 import java.io.IOException;
-import java.math.BigInteger;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
@@ -104,14 +102,21 @@ public class ReleasePace implements AutoCloseable {
      * @return {@code true} when enabled for the configured context
      */
     public boolean isEnabled(String key) {
+        return explain(key).enabled;
+    }
+
+    /**
+     * Full evaluation result for a flag — same reason codes the dashboard
+     * lookup screen shows. Useful in logs when debugging a missing feature.
+     */
+    public Evaluation.Result explain(String key) {
         Flag flag = cache.get().get(key);
-        if (flag == null || !flag.enabled) return false;
-        if (flag.rolloutPct != null && flag.rolloutPct < 100) {
-            String id = context.getOrDefault("userId",
-                    context.getOrDefault("sessionId", key));
-            return hashBucket(id + key) < flag.rolloutPct;
+        if (flag == null) {
+            return Evaluation.Result.of(key, false, null, "NOT_FOUND");
         }
-        return true;
+        // Segments not pre-loaded in this version; attribute-based rules work
+        // without them. in_segment evaluates against an empty set for now.
+        return Evaluation.evaluate(flag, context, Map.of());
     }
 
     /**
@@ -168,8 +173,6 @@ public class ReleasePace implements AutoCloseable {
             StringBuilder url = new StringBuilder(apiUrl)
                 .append("/api/client/features?environment=")
                 .append(encodeQueryValue(environment));
-            context.forEach((k, v) ->
-                url.append("&ctx_").append(encodeQueryValue(k)).append("=").append(encodeQueryValue(v)));
 
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(url.toString()))
@@ -232,17 +235,6 @@ public class ReleasePace implements AutoCloseable {
         return version != null ? version : "dev";
     }
 
-    private static int hashBucket(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
-            return new BigInteger(1, Arrays.copyOfRange(digest, 0, 4))
-                .mod(BigInteger.valueOf(100))
-                .intValue();
-        } catch (Exception e) {
-            return Math.floorMod(input.hashCode(), 100);
-        }
-    }
 
     // ── Builder ────────────────────────────────────────────────
 

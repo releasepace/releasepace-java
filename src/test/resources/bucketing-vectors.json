@@ -1,0 +1,108 @@
+{
+  "_comment": "Conformance fixture for ReleasePace rollout bucketing. Every SDK MUST reproduce these exactly. Do not edit by hand.",
+  "algorithm": "murmurhash3_x86_32",
+  "seed": 0,
+  "hash_input": "${flag_key}:${entity_id}",
+  "bucket": "hash % 100",
+  "encoding": "UTF-8",
+  "known_answer_tests": [
+    {
+      "input": "",
+      "hash": 0
+    },
+    {
+      "input": "a",
+      "hash": 1009084850
+    },
+    {
+      "input": "abc",
+      "hash": 3017643002
+    },
+    {
+      "input": "abcd",
+      "hash": 1139631978
+    },
+    {
+      "input": "hello",
+      "hash": 613153351
+    },
+    {
+      "input": "Hello, world!",
+      "hash": 3224780355
+    }
+  ],
+  "vectors": [
+    {
+      "flag_key": "new-checkout",
+      "entity_id": "user_1042",
+      "hash": 2770600616,
+      "bucket": 16
+    },
+    {
+      "flag_key": "new-checkout",
+      "entity_id": "user_2871",
+      "hash": 1171453760,
+      "bucket": 60
+    },
+    {
+      "flag_key": "new-checkout",
+      "entity_id": "user_5530",
+      "hash": 1050284106,
+      "bucket": 6
+    },
+    {
+      "flag_key": "new-checkout",
+      "entity_id": "acme-corp",
+      "hash": 1791986796,
+      "bucket": 96
+    },
+    {
+      "flag_key": "new-checkout",
+      "entity_id": "globex",
+      "hash": 590050397,
+      "bucket": 97
+    },
+    {
+      "flag_key": "new-checkout",
+      "entity_id": "initech",
+      "hash": 3690364398,
+      "bucket": 98
+    },
+    {
+      "flag_key": "report-builder",
+      "entity_id": "acme-corp",
+      "hash": 3159384522,
+      "bucket": 22
+    },
+    {
+      "flag_key": "report-builder",
+      "entity_id": "globex",
+      "hash": 3267503297,
+      "bucket": 97
+    },
+    {
+      "flag_key": "cta-label",
+      "entity_id": "user_1042",
+      "hash": 578722306,
+      "bucket": 6
+    },
+    {
+      "flag_key": "a",
+      "entity_id": "b",
+      "hash": 2722392131,
+      "bucket": 31
+    },
+    {
+      "flag_key": "flag-with-unicode",
+      "entity_id": "tenant_日本",
+      "hash": 610773396,
+      "bucket": 96
+    },
+    {
+      "flag_key": "flag",
+      "entity_id": "entity-with-emoji-🚀",
+      "hash": 3456678219,
+      "bucket": 19
+    }
+  ]
+}
