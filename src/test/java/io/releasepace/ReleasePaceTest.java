@@ -29,10 +29,13 @@ class ReleasePaceTest {
         {
           "version": 1,
           "environment": "test",
+          "segments": {"design-partners": ["acme"]},
           "features": [
             {"key":"bool-on",    "name":"Bool On",    "type":"boolean","enabled":true, "value":null,    "rollout_pct":null, "strategies":[]},
             {"key":"bool-off",   "name":"Bool Off",   "type":"boolean","enabled":false,"value":null,    "rollout_pct":null, "strategies":[]},
             {"key":"str-flag",   "name":"Str Flag",   "type":"string", "enabled":true, "value":"hello", "rollout_pct":null, "strategies":[]},
+            {"key":"tenant-banner", "name":"Tenant Banner", "type":"string", "enabled":true, "value":"default", "rollout_pct":null, "bucket_by":null, "targeting_rules":[{"id":"acme","conditions":[{"attribute":"tenantId","op":"equals","value":"acme"}],"serve":{"enabled":true,"value":"Acme banner"}}], "strategies":[]},
+            {"key":"segment-banner", "name":"Segment Banner", "type":"string", "enabled":true, "value":"default", "rollout_pct":null, "bucket_by":null, "targeting_rules":[{"id":"partners","conditions":[{"attribute":"tenantId","op":"in_segment","value":"design-partners"}],"serve":{"enabled":true,"value":"Partner banner"}}], "strategies":[]},
             {"key":"num-flag",   "name":"Num Flag",   "type":"number", "enabled":true, "value":42,      "rollout_pct":null, "strategies":[]},
             {"key":"rollout-0",  "name":"Roll 0",     "type":"boolean","enabled":true, "value":null,    "rollout_pct":0,    "strategies":[]},
             {"key":"rollout-100","name":"Roll 100",   "type":"boolean","enabled":true, "value":null,    "rollout_pct":100,  "strategies":[]},
@@ -72,7 +75,7 @@ class ReleasePaceTest {
 
     ReleasePace buildClient() {
         return ReleasePace.builder()
-            .apiKey("rp_live_test")
+            .apiKey("rp_srv_test")
             .environment("test")
             .apiUrl(serverUrl)
             .pollIntervalMs(Long.MAX_VALUE) // disable polling
@@ -89,7 +92,7 @@ class ReleasePaceTest {
     @Test
     void rejectsInvalidPollInterval() {
         assertThrows(IllegalArgumentException.class, () -> ReleasePace.builder()
-            .apiKey("rp_live_test")
+            .apiKey("rp_srv_test")
             .pollIntervalMs(0)
             .build());
     }
@@ -164,7 +167,7 @@ class ReleasePaceTest {
             var ctx = new java.util.HashMap<String, String>();
             ctx.put("userId", "sticky-test-user");
             ReleasePace rp2 = ReleasePace.builder()
-                .apiKey("rp_live_test")
+                .apiKey("rp_srv_test")
                 .environment("test")
                 .apiUrl(serverUrl)
                 .pollIntervalMs(Long.MAX_VALUE)
@@ -184,7 +187,7 @@ class ReleasePaceTest {
         var context = new HashMap<String, String>();
         context.put("user id", "a&b=c");
         try (ReleasePace ignored = ReleasePace.builder()
-            .apiKey("rp_live_test")
+            .apiKey("rp_srv_test")
             .environment("test env")
             .apiUrl(serverUrl)
             .pollIntervalMs(Long.MAX_VALUE)
@@ -196,10 +199,42 @@ class ReleasePaceTest {
     }
 
     @Test
+    void valueGettersUseTargetingEvaluation() {
+        var context = new HashMap<String, String>();
+        context.put("tenantId", "acme");
+        try (ReleasePace rp = ReleasePace.builder()
+            .apiKey("rp_srv_test")
+            .environment("test")
+            .apiUrl(serverUrl)
+            .pollIntervalMs(Long.MAX_VALUE)
+            .context(context)
+            .build()
+            .connect()) {
+            assertEquals("Acme banner", rp.getString("tenant-banner", "fallback"));
+        }
+    }
+
+    @Test
+    void localEvaluationLoadsReferencedSegmentMemberships() {
+        var context = new HashMap<String, String>();
+        context.put("tenantId", "acme");
+        try (ReleasePace rp = ReleasePace.builder()
+            .apiKey("rp_srv_test")
+            .environment("test")
+            .apiUrl(serverUrl)
+            .pollIntervalMs(Long.MAX_VALUE)
+            .context(context)
+            .build()
+            .connect()) {
+            assertEquals("Partner banner", rp.getString("segment-banner", "fallback"));
+        }
+    }
+
+    @Test
     void connectIsIdempotent() {
         int before = requestCount.get();
         try (ReleasePace rp = ReleasePace.builder()
-            .apiKey("rp_live_test")
+            .apiKey("rp_srv_test")
             .apiUrl(serverUrl)
             .pollIntervalMs(Long.MAX_VALUE)
             .build()) {
@@ -213,7 +248,7 @@ class ReleasePaceTest {
     void onUpdateCalledForInitialLoadAndRemoval() {
         var updateCount = new AtomicInteger();
         try (ReleasePace rp = ReleasePace.builder()
-            .apiKey("rp_live_test")
+            .apiKey("rp_srv_test")
             .apiUrl(serverUrl)
             .pollIntervalMs(Long.MAX_VALUE)
             .onUpdate(flags -> updateCount.incrementAndGet())

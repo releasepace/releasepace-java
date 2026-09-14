@@ -21,7 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *
  * <pre>{@code
  * ReleasePace fk = ReleasePace.builder()
- *     .apiKey("rp_live_xxx")
+ *     .apiKey("rp_srv_xxx")
  *     .environment("production")
  *     .build();
  *
@@ -48,6 +48,7 @@ public class ReleasePace implements AutoCloseable {
     private final HttpClient http;
     private final ObjectMapper mapper = new ObjectMapper();
     private final AtomicReference<Map<String, Flag>> cache = new AtomicReference<>(new ConcurrentHashMap<>());
+    private volatile Map<String, Set<String>> segments = Map.of();
     private ScheduledExecutorService scheduler;
     private volatile boolean connected = false;
 
@@ -114,9 +115,7 @@ public class ReleasePace implements AutoCloseable {
         if (flag == null) {
             return Evaluation.Result.of(key, false, null, "NOT_FOUND");
         }
-        // Segments not pre-loaded in this version; attribute-based rules work
-        // without them. in_segment evaluates against an empty set for now.
-        return Evaluation.evaluate(flag, context, Map.of());
+        return Evaluation.evaluate(flag, context, segments);
     }
 
     /**
@@ -126,9 +125,8 @@ public class ReleasePace implements AutoCloseable {
      * @return the evaluated value or {@code defaultValue}
      */
     public String getString(String key, String defaultValue) {
-        Flag flag = cache.get().get(key);
-        if (flag == null || !flag.enabled || flag.value == null) return defaultValue;
-        return flag.value.toString();
+        Object value = evaluatedValue(key);
+        return value == null ? defaultValue : value.toString();
     }
 
     /**
@@ -138,9 +136,9 @@ public class ReleasePace implements AutoCloseable {
      * @return the evaluated value or {@code defaultValue}
      */
     public double getNumber(String key, double defaultValue) {
-        Flag flag = cache.get().get(key);
-        if (flag == null || !flag.enabled || flag.value == null) return defaultValue;
-        try { return Double.parseDouble(flag.value.toString()); }
+        Object value = evaluatedValue(key);
+        if (value == null) return defaultValue;
+        try { return Double.parseDouble(value.toString()); }
         catch (NumberFormatException e) { return defaultValue; }
     }
 
@@ -151,9 +149,13 @@ public class ReleasePace implements AutoCloseable {
      * @return the raw evaluated value or {@code defaultValue}
      */
     public Object getValue(String key, Object defaultValue) {
-        Flag flag = cache.get().get(key);
-        if (flag == null || !flag.enabled) return defaultValue;
-        return flag.value != null ? flag.value : defaultValue;
+        Object value = evaluatedValue(key);
+        return value != null ? value : defaultValue;
+    }
+
+    private Object evaluatedValue(String key) {
+        Evaluation.Result result = explain(key);
+        return result.enabled ? result.value : null;
     }
 
     /**
@@ -196,6 +198,13 @@ public class ReleasePace implements AutoCloseable {
             if (features == null) {
                 throw new IOException("ReleasePace API response is missing features");
             }
+
+            @SuppressWarnings("unchecked")
+            Map<String, List<String>> rawSegments =
+                (Map<String, List<String>>) body.getOrDefault("segments", Map.of());
+            Map<String, Set<String>> newSegments = new HashMap<>();
+            rawSegments.forEach((key, members) -> newSegments.put(key, Set.copyOf(members)));
+            segments = Collections.unmodifiableMap(newSegments);
 
             Map<String, Flag> newCache = new HashMap<>();
 

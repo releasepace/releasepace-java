@@ -33,7 +33,7 @@ import io.releasepace.ReleasePace;
 
 // try-with-resources — auto-closes and stops polling
 try (ReleasePace rp = ReleasePace.builder()
-        .apiKey("rp_live_xxxxxxxxxxxx")
+        .apiKey("rp_srv_xxxxxxxxxxxx")
         .environment("production")
         .build()
         .connect()) {
