@@ -183,7 +183,7 @@ class ReleasePaceTest {
     }
 
     @Test
-    void contextAndEnvironmentAreUrlEncoded() {
+    void environmentIsEncodedAndContextStaysLocal() {
         var context = new HashMap<String, String>();
         context.put("user id", "a&b=c");
         try (ReleasePace ignored = ReleasePace.builder()
@@ -194,7 +194,7 @@ class ReleasePaceTest {
             .context(context)
             .build()
             .connect()) {
-            assertEquals("environment=test+env&ctx_user+id=a%26b%3Dc", lastRawQuery.get());
+            assertEquals("environment=test+env", lastRawQuery.get());
         }
     }
 
